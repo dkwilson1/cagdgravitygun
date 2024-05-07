@@ -5,15 +5,17 @@ using UnityEngine.InputSystem;
 
 public class PlayerControl : MonoBehaviour
 {
-    public float moveSpeed = .2f; // The speed the character moves per update.
-    public float lookSpeed = .1f; // The look sensitivity for the controller.
-    float jumpHeight = 400f; // The amount of force to apply on jump.
+    public float moveSpeed; // The speed the character moves per update.
+    public float lookSpeed; // The look sensitivity for the controller.
+    public float jumpHeight; // The amount of force to apply on jump.
+    public float holdRange; // The range between the camera and the held object.
+    public float fireForce; // The amount of force we give to the held item after firing it.
 
-    float vertRot = 0f; // Rotation of camera on the vertical axis.
-    float horRot = 0f; // Rotation of character on the horizontal axis
+    private float vertRot = 0f; // Rotation of camera on the vertical axis.
+    private float horRot = 0f; // Rotation of character on the horizontal axis
 
-    Rigidbody charrb; // This character's rigidbody.
-    public Camera cam; // The camera for this character.
+    private Rigidbody charrb; // This character's rigidbody.
+    private Camera cam; // The camera for this character.
 
     private Vector2 moveVector; // The directional vector for movement.
 
@@ -26,6 +28,9 @@ public class PlayerControl : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
+        // Set camera reference.
+        cam = Camera.main;
+
         // Set rigidbody reference.
         charrb = GetComponent<Rigidbody>();
     }
@@ -35,10 +40,8 @@ public class PlayerControl : MonoBehaviour
     /// </summary>
     private Rigidbody Ray ()
     {
-        RaycastHit hit;
         Rigidbody rb;
-        Debug.DrawRay(cam.transform.position, cam.transform.forward*100, Color.yellow);
-        if(Physics.Raycast(cam.transform.position, cam.transform.forward*100, out hit))
+        if(Physics.Raycast(cam.transform.position, cam.transform.forward, out RaycastHit hit, 100))
         {
             if(hit.collider.gameObject.GetComponent<Rigidbody>() != null)
             {
@@ -49,11 +52,40 @@ public class PlayerControl : MonoBehaviour
         return null;
     }
 
-    private void PickUp(Rigidbody rb)
+    /// <summary>
+    /// Returns the location where we want the held body to be located.
+    /// </summary>
+    private Vector3 getHoldLocation()
     {
-        
+        return cam.transform.position + (cam.transform.forward * holdRange);
     }
 
+    /// <summary>
+    /// Function to pickup an object by the rigidbody and set it's location to the desired location.
+    /// </summary>
+    private void PickUp(Rigidbody rb)
+    {
+        if(heldBody == null)
+        {
+            heldBody = rb;
+            heldBody.useGravity = false;
+        }
+    }
+
+    /// <summary>
+    /// Function to drop the currently held rigidbody. Returns the rigidbody in the case we want to throw it.
+    /// </summary>
+    private Rigidbody Drop()
+    {
+        if(heldBody != null)
+        {
+            Rigidbody rbref = heldBody;
+            rbref.useGravity = true;
+            heldBody = null;
+            return rbref;
+        }
+        return null;
+    }
 
 
     /// <summary>
@@ -88,7 +120,7 @@ public class PlayerControl : MonoBehaviour
     /// </summary>
     public void OnJump(InputAction.CallbackContext context)
     {
-        if(context.performed && charrb.velocity.y == 0) charrb.AddForce(Vector3.up*jumpHeight);
+        if(context.performed && charrb.velocity.y == 0) charrb.AddForce(Vector3.up*jumpHeight, ForceMode.Impulse);
     }
 
     /// <summary>
@@ -96,7 +128,8 @@ public class PlayerControl : MonoBehaviour
     /// </summary>
     public void OnFire(InputAction.CallbackContext context)
     {
-
+        Rigidbody rbref = Drop();
+        if(rbref != null) rbref.AddForce(cam.transform.forward*fireForce, ForceMode.Impulse);
     }
 
     /// <summary>
@@ -108,9 +141,13 @@ public class PlayerControl : MonoBehaviour
         if(item != null && heldBody == null)
         {
             // If the gravity gun is currently not holding an item, and the raycast hits an item, pick up the raycast result.
+            Debug.Log("Picking up "+item.name);
+            PickUp(item);
         } else if (heldBody != null)
         {
             // If the gravity gun is holding an item, drop it.
+            Debug.Log("Dropping "+heldBody.name);
+            Drop();
         }
     }
 
@@ -118,5 +155,8 @@ public class PlayerControl : MonoBehaviour
     {
         // If the controller is inputting movement controls, move the character.
         if (moveVector != Vector2.zero) this.transform.position += (this.transform.forward*moveVector.y + this.transform.right*moveVector.x)*moveSpeed;
+
+        // If we are holding an object, set it's location to stay infront of the camera.
+        if (heldBody != null) heldBody.transform.position = getHoldLocation();
     }
 }
