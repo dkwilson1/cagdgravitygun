@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using static UnityEditor.Progress;
 
 public class PlayerControl : MonoBehaviour
 {
@@ -10,11 +11,15 @@ public class PlayerControl : MonoBehaviour
     public float jumpHeight; // The amount of force to apply on jump.
     public float holdRange; // The range between the camera and the held object.
     public float fireForce; // The amount of force we give to the held item after firing it.
+    public float grabDistance; // The distance in which you can pickup an item. Raycast will be 3x this value, and if the raycast hits the object, but it is not close enough, we will pull it towards us instead.
+    public float pullForce; // The amount of force to add when pulling an item.
+    public float massLimit; // The limit of mass we can pick up.
 
     private float vertRot = 0f; // Rotation of camera on the vertical axis.
     private float horRot = 0f; // Rotation of character on the horizontal axis
 
     private Rigidbody charrb; // This character's rigidbody.
+    private Rigidbody pullBody; // The rigidbody being pulled.
     private Camera cam; // The camera for this character.
 
     private Vector2 moveVector; // The directional vector for movement.
@@ -65,10 +70,13 @@ public class PlayerControl : MonoBehaviour
     /// </summary>
     private void PickUp(Rigidbody rb)
     {
-        if(heldBody == null)
+        if(heldBody == null && rb.mass<=massLimit)
         {
             heldBody = rb;
+            // Clear velocity and turn off gravity (so it doesn't fall down while grabbed.)
             heldBody.useGravity = false;
+            heldBody.velocity = Vector3.zero;
+            heldBody.angularVelocity = Vector3.zero;
         }
     }
 
@@ -127,9 +135,11 @@ public class PlayerControl : MonoBehaviour
     /// Function to fire the object the character is holding.
     /// </summary>
     public void OnFire(InputAction.CallbackContext context)
-    {
-        Rigidbody rbref = Drop();
-        if(rbref != null) rbref.AddForce(cam.transform.forward*fireForce, ForceMode.Impulse);
+    {   
+        if(context.performed) {
+            Rigidbody rbref = Drop();
+            if (rbref != null) rbref.AddForce(cam.transform.forward * fireForce, ForceMode.Impulse);
+        }
     }
 
     /// <summary>
@@ -137,17 +147,37 @@ public class PlayerControl : MonoBehaviour
     /// </summary>
     public void OnGrab(InputAction.CallbackContext context)
     {
-        Rigidbody item = Ray();
-        if(item != null && heldBody == null)
+        if (context.performed)
         {
-            // If the gravity gun is currently not holding an item, and the raycast hits an item, pick up the raycast result.
-            Debug.Log("Picking up "+item.name);
-            PickUp(item);
-        } else if (heldBody != null)
+            Rigidbody item = Ray();
+            if (heldBody != null)
+            {
+                // If the gravity gun is holding an item, drop it.
+                Debug.Log("Dropping " + heldBody.name);
+                Drop();
+            }
+            else if (item != null && heldBody == null)
+            {
+                if(Vector3.Distance(this.transform.position, item.position) <= grabDistance)
+                {
+                    Debug.Log(Vector3.Distance(this.transform.position, item.position));
+                    // Close enough. Grab the item.
+                    Debug.Log("Picking up " + item.name);
+                    PickUp(item);
+                } else if (Vector3.Distance(this.transform.position, item.position) <= grabDistance*3)
+                {
+                    // Not close enough. Start pulling instead.
+                    Debug.Log("Pulling " + item.name);
+                    pullBody = item;
+                }
+                // If the gravity gun is currently not holding an item, and the raycast hits an item, pick up the raycast result.
+            }
+        }
+        else if (context.canceled)
         {
-            // If the gravity gun is holding an item, drop it.
-            Debug.Log("Dropping "+heldBody.name);
-            Drop();
+            // If we are pulling an object, stop pulling it.
+            if (pullBody != null) pullBody = null;
+
         }
     }
 
@@ -156,7 +186,16 @@ public class PlayerControl : MonoBehaviour
         // If the controller is inputting movement controls, move the character.
         if (moveVector != Vector2.zero) this.transform.position += (this.transform.forward*moveVector.y + this.transform.right*moveVector.x)*moveSpeed;
 
-        // If we are holding an object, set it's location to stay infront of the camera.
+        // If we are holding an item, set it's location to stay infront of the camera. If not holding an item, and we are pulling on. Add force to the body of the one we're pulling.
         if (heldBody != null) heldBody.transform.position = getHoldLocation();
+        else if (pullBody != null) {
+            // If the item with the pullBody gets close enough, pick it up.
+            pullBody.AddForce((this.transform.position-pullBody.transform.position).normalized * (pullForce*(pullBody.mass*Mathf.Pow(.96f, pullBody.mass-1))));
+            if (Vector3.Distance(this.transform.position, pullBody.position) <= grabDistance)
+            {
+                PickUp(pullBody);
+                pullBody = null;
+            }
+        }
     }
 }
