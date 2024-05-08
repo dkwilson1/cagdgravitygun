@@ -1,8 +1,9 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
+using UnityEngine.Experimental.GlobalIllumination;
 using UnityEngine.InputSystem;
-using static UnityEditor.Progress;
 
 public class PlayerControl : MonoBehaviour
 {
@@ -21,10 +22,16 @@ public class PlayerControl : MonoBehaviour
     private Rigidbody charrb; // This character's rigidbody.
     private Rigidbody pullBody; // The rigidbody being pulled.
     private Camera cam; // The camera for this character.
+    public Light gravpl; // Point light attached to the gravity gun that turns on when grabbing something, and off when not grabbing anything.
+
+    public AudioSource fireSound;
+    public AudioSource grabSound;
+    public AudioSource idleSound;
+    public AudioSource failSound;
 
     private Vector2 moveVector; // The directional vector for movement.
 
-    Rigidbody heldBody; // The rigidbody of the object currently held by the gravity gun.
+    private Rigidbody heldBody; // The rigidbody of the object currently held by the gravity gun.
 
 
     private void Awake()
@@ -73,10 +80,16 @@ public class PlayerControl : MonoBehaviour
         if(heldBody == null && rb.mass<=massLimit)
         {
             heldBody = rb;
+            if (heldBody.isKinematic == true) heldBody.isKinematic = false; // Disable kinematic mode. (If the item is sticking we want to unstick it).
             // Clear velocity and turn off gravity (so it doesn't fall down while grabbed.)
             heldBody.useGravity = false;
             heldBody.velocity = Vector3.zero;
             heldBody.angularVelocity = Vector3.zero;
+
+            // Turn on light when holding an item.
+            gravpl.intensity = 10f;
+            grabSound.Play();
+            idleSound.Play();
         }
     }
 
@@ -90,6 +103,7 @@ public class PlayerControl : MonoBehaviour
             Rigidbody rbref = heldBody;
             rbref.useGravity = true;
             heldBody = null;
+            idleSound.Stop();
             return rbref;
         }
         return null;
@@ -138,7 +152,17 @@ public class PlayerControl : MonoBehaviour
     {   
         if(context.performed) {
             Rigidbody rbref = Drop();
-            if (rbref != null) rbref.AddForce(cam.transform.forward * fireForce, ForceMode.Impulse);
+            if (rbref != null) rbref.AddForce(cam.transform.forward * fireForce * (rbref.mass * Mathf.Pow(.9f, rbref.mass - 1)), ForceMode.Impulse);
+            else if (Ray() != null) Ray().AddForce(cam.transform.forward * fireForce * (Ray().mass * Mathf.Pow(.8f, Ray().mass - 1)), ForceMode.Impulse); // If we are not holding an object, push back the one we're looking at.
+            else
+            {
+                failSound.Play();
+                gravpl.intensity = 2f;
+                return;
+            }
+            // Turn on light when throwing an item.
+            gravpl.intensity = 30f;
+            fireSound.Play();
         }
     }
 
@@ -160,7 +184,6 @@ public class PlayerControl : MonoBehaviour
             {
                 if(Vector3.Distance(this.transform.position, item.position) <= grabDistance)
                 {
-                    Debug.Log(Vector3.Distance(this.transform.position, item.position));
                     // Close enough. Grab the item.
                     Debug.Log("Picking up " + item.name);
                     PickUp(item);
@@ -171,6 +194,10 @@ public class PlayerControl : MonoBehaviour
                     pullBody = item;
                 }
                 // If the gravity gun is currently not holding an item, and the raycast hits an item, pick up the raycast result.
+            } else
+            {
+                failSound.Play();
+                gravpl.intensity = 2f;
             }
         }
         else if (context.canceled)
@@ -181,14 +208,35 @@ public class PlayerControl : MonoBehaviour
         }
     }
 
+    private void Update()
+    {
+        // If we let go of an object, turn off the light.
+        if (gravpl.intensity>0 && heldBody == null && pullBody == null)
+        {
+            gravpl.intensity -= .2f;
+        }
+    }
+
     private void FixedUpdate()
     {
         // If the controller is inputting movement controls, move the character.
         if (moveVector != Vector2.zero) this.transform.position += (this.transform.forward*moveVector.y + this.transform.right*moveVector.x)*moveSpeed;
 
-        // If we are holding an item, set it's location to stay infront of the camera. If not holding an item, and we are pulling on. Add force to the body of the one we're pulling.
-        if (heldBody != null) heldBody.transform.position = getHoldLocation();
+        // If we are holding an item, set it's location/rotation to stay infront of the camera. If not holding an item, and we are pulling on. Add force to the body of the one we're pulling.
+        if (heldBody != null)
+        {
+            if (heldBody == Ray())
+            {
+                heldBody.transform.position = Vector3.Lerp(heldBody.transform.position, getHoldLocation(), 2f);
+                heldBody.transform.rotation = cam.transform.rotation;
+                heldBody.transform.Rotate(-90, 0, 0);
+            } else // If the held body moves too far away from the cursor, drop the item.
+            {
+                Drop();
+            }
+        }
         else if (pullBody != null) {
+            if (gravpl.intensity != 2f) gravpl.intensity = 2f;
             // If the item with the pullBody gets close enough, pick it up.
             pullBody.AddForce((this.transform.position-pullBody.transform.position).normalized * (pullForce*(pullBody.mass*Mathf.Pow(.96f, pullBody.mass-1))));
             if (Vector3.Distance(this.transform.position, pullBody.position) <= grabDistance)
